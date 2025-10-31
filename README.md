@@ -1,37 +1,135 @@
-# GitHub Docs <!-- omit in toc -->
+// --- Global Device Configuration ---
+DEFINE DEVICE_ID = "IGUARD_14.4_BATTALION_001"
+DEFINE GPRS_APN = "your_gprs_apn"
+DEFINE SATELLITE_PROFILE = "your_satellite_profile"
+DEFINE ALERT_RECIPIENT_PHONE = "+1234567890"
+DEFINE ALERT_RECIPIENT_EMAIL = "alerts@yourcommand.com"
+DEFINE IMAGE_RESOLUTION = "1920x1080"
+DEFINE VIDEO_DURATION_ON_EVENT = "15_seconds"
+DEFINE MOTION_THRESHOLD = 50 // Sensitivity for motion sensor
+DEFINE HEARTBEAT_INTERVAL = 3600 // Send status every hour (seconds)
 
-Welcome to GitHub Docs! GitHub’s documentation is open source, meaning anyone from inside or outside the company can contribute. For full contributing guidelines, visit our [contributing guide](https://docs.github.com/en/contributing)
+// --- Initialize System ---
+FUNCTION setup()
+    // Initialize Power Management
+    CALL PowerManager.init()
+    CALL PowerManager.monitorBattery()
 
-## Quick links by contributor type
+    // Initialize Communication Modules
+    CALL GPRS.init(GPRS_APN)
+    CALL Satellite.init(SATELLITE_PROFILE)
+    CALL GPS.init()
 
-* **Hubbers (GitHub employees):** See [CONTRIBUTING.md](https://github.com/github/docs-content/blob/main/CONTRIBUTING.md) in the `docs-content` repository for GitHub-specific processes.
+    // Initialize Sensors
+    CALL Camera.init(IMAGE_RESOLUTION)
+    CALL MotionSensor.init(MOTION_THRESHOLD)
+    CALL IRSensor.init()
+    CALL AcousticSensor.init()
+    CALL EnvironmentalSensors.init()
 
-* **Open source contributors:** See [CONTRIBUTING.md](https://github.com/github/docs/blob/main/.github/CONTRIBUTING.md) in the `docs` repository for a quick-start summary.
+    // Load saved settings from Flash Storage
+    CALL ConfigManager.loadSettings()
 
-## How we sync changes across Docs repositories
+    LOG("Device setup complete. Ready for operation.")
+END FUNCTION
 
-There are two GitHub Docs repositories: 
+// --- Main Operating Loop ---
+FUNCTION loop()
+    // Check for incoming commands (e.g., from command center)
+    CALL CommsManager.checkIncomingCommands()
 
-- **`github/docs`** (public): Open to external contributions
+    // Monitor for motion events
+    IF MotionSensor.detectMotion() THEN
+        CALL handleMotionEvent()
+    END IF
 
-- **`github/docs-internal`** (private): For GitHub employee contributions. 
+    // Monitor for acoustic events
+    IF AcousticSensor.detectSoundEvent() THEN
+        CALL handleAcousticEvent()
+    END IF
 
-The two repositories sync frequently. Content changes in one are reflected in the other.  Hubbers might prefer to post in `docs` when working with a customer, but `docs` has limitations on the types of contributions it accepts to safeguard the site and our workflows. Internal contributions should usually go to `docs-internal`.
+    // Perform scheduled tasks
+    CALL performScheduledTasks()
 
-**Important:** The `docs` repository accepts contributions to content files (`.md` files in `/content` and select `/data` sections like reusables only). Infrastructure files, workflows, and site-building code are not open for external modification.
+    // Sleep for a short period to save power
+    CALL System.sleep(100_milliseconds)
+END FUNCTION
 
-## New to contributing
+// --- Event Handlers ---
+FUNCTION handleMotionEvent()
+    LOG("Motion detected! Capturing evidence.")
+    CALL IRSensor.activate() // Ensure night vision is ready
 
-Here are some resources to help you get started with open source contributions:
+    // Capture Image
+    IMAGE eventImage = Camera.captureImage()
+    CALL StorageManager.saveImage(eventImage)
+    CALL CommsManager.sendAlert(ALERT_RECIPIENT_EMAIL, "MOTION ALERT", "Motion detected at " + GPS.getLocation(), eventImage)
 
-* [Finding ways to contribute to open source on GitHub](https://docs.github.com/en/get-started/exploring-projects-on-github/finding-ways-to-contribute-to-open-source-on-github)
-* [Set up Git](https://docs.github.com/en/get-started/git-basics/set-up-git)
-* [GitHub flow](https://docs.github.com/en/get-started/using-github/github-flow)
-* [Collaborating with pull requests](https://docs.github.com/en/github/collaborating-with-pull-requests)
+    // Capture Video (if configured)
+    VIDEO eventVideo = Camera.recordVideo(VIDEO_DURATION_ON_EVENT)
+    CALL StorageManager.saveVideo(eventVideo)
+    // Send video via GPRS/Satellite (might be large, could send thumbnail first)
+    // CALL CommsManager.sendVideo(ALERT_RECIPIENT_EMAIL, "MOTION VIDEO", eventVideo)
 
-## License
+    CALL IRSensor.deactivate()
+END FUNCTION
 
-This project is dual-licensed under:
+FUNCTION handleAcousticEvent()
+    LOG("Significant sound event detected! Analyzing.")
+    // Depending on sophistication, could classify sound (e.g., gunshot, vehicle)
+    STRING soundType = AcousticSensor.analyzeSound()
 
-* **Creative Commons Attribution 4.0** - for documentation and content in the assets, content, and data folders (see [LICENSE](LICENSE))
-* **MIT License** - for code (see [LICENSE-CODE](LICENSE-CODE))
+    IF soundType == "GUNSHOT" OR soundType == "EXPLOSION" THEN
+        IMAGE eventImage = Camera.captureImage()
+        CALL StorageManager.saveImage(eventImage)
+        CALL CommsManager.sendAlert(ALERT_RECIPIENT_PHONE, "CRITICAL ACOUSTIC ALERT: " + soundType, "Event at " + GPS.getLocation(), eventImage)
+    END IF
+END FUNCTION
+
+// --- Scheduled Tasks ---
+FUNCTION performScheduledTasks()
+    IF System.currentTime() % HEARTBEAT_INTERVAL == 0 THEN
+        CALL sendHeartbeat()
+    END IF
+
+    // Check for software updates
+    IF ConfigManager.isUpdateAvailable() THEN
+        CALL updateFirmware()
+    END IF
+
+    // Manage storage (e.g., delete oldest files if full)
+    CALL StorageManager.manageStorage()
+END FUNCTION
+
+FUNCTION sendHeartbeat()
+    LOCATION currentLocation = GPS.getLocation()
+    BATTERY_STATUS currentBattery = PowerManager.getBatteryStatus()
+    ENVIRONMENTAL_DATA envData = EnvironmentalSensors.readData()
+
+    STRING statusMessage = "Device " + DEVICE_ID + " OK. Loc: " + currentLocation.latitude + "," + currentLocation.longitude +
+                           " Bat: " + currentBattery.level + "%. Temp: " + envData.temperature + "C."
+
+    // Try GPRS first, fall back to Satellite if GPRS fails
+    IF GPRS.isAvailable() THEN
+        CALL GPRS.sendMessage(ALERT_RECIPIENT_EMAIL, "HEARTBEAT", statusMessage)
+    ELSE IF Satellite.isAvailable() THEN
+        CALL Satellite.sendMessage(ALERT_RECIPIENT_EMAIL, "HEARTBEAT", statusMessage)
+    ELSE
+        LOG_ERROR("Heartbeat failed: No communication link available.")
+    END IF
+END FUNCTION
+
+// --- Communication Management (Simplified) ---
+MODULE CommsManager
+    FUNCTION checkIncomingCommands()
+        // Poll GPRS for commands
+        // Poll Satellite for commands
+        // Parse commands (e.g., "TAKE_PIC", "CHANGE_SETTING", "REQUEST_STATUS")
+        // Execute corresponding actions
+    END FUNCTION
+
+    FUNCTION sendAlert(recipient, subject, message, attachment = NULL)
+        // Prioritize GPRS for speed, fall back to Satellite for reliability
+        IF GPRS.isAvailable() THEN
+            CALL GPRS.sendData(recipient, subject, message, attachment)
+        ELSE IF Satellite.isAvaila
